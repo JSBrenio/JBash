@@ -29,14 +29,15 @@ DONOT change the existing function definitions. You can add functions, if necess
 */
 
 #define EXIT_SUCCESS 0
-#define MAX_STR_BUFFER 256
-#define CMD_LINE_BUFFER 1024
+#define MAX_STR_BUFFER 16
+#define CMD_LINE_BUFFER 16
 #define NEWLINE '\n'
 #define NULLCHAR '\0'
 
 int execute(char **args);
 char** parse(void);
-void free_leftover_string(char *token, int string_length);
+void* realloc_buffer(void *ptr, size_t *current_buffer);
+void* realloc_leftover_string(char *token, size_t string_length);
 void *safe_malloc(size_t size);
 void free_args(char **args);
 
@@ -55,13 +56,10 @@ int main(int argc, char **argv)
         fprintf(stdout, "MyShell> ");
         args = parse();
         status = execute(args);
+        free_args(args);
         if (status == 0) {
-            free_args(args);
             fprintf(stdout, "exiting...\n");
             break;
-        }
-        if (status == 1) {
-            free_args(args);
         }
     }
 
@@ -75,7 +73,7 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
-    printf("Executing command: %s\n", args[0]);
+    //printf("Executing command: %s\n", args[0]);
     if (strcmp(args[0], "exit") == 0) { // command exit check to terminate shell
         return 0;
     }
@@ -95,7 +93,6 @@ int execute(char **args)
     }
 }
 
-// TODO: account for quotes/other delimiters
 /**
   @brief gets the input from the prompt and splits it into tokens. Prepares the arguments for execvp
   @return returns char** args to be used by execvp
@@ -103,27 +100,39 @@ int execute(char **args)
 char** parse(void)
 {
     char ch;
-    size_t command_line_buffer_size = CMD_LINE_BUFFER;
-    size_t token_buffer_size = MAX_STR_BUFFER;
-    char **args = safe_malloc(sizeof(char *) * command_line_buffer_size);
-    char *token = safe_malloc(sizeof(char) * token_buffer_size);
-    int string_length = 0, array_length = 0;
+    size_t command_line_buffer_length = CMD_LINE_BUFFER;
+    size_t token_buffer_length = MAX_STR_BUFFER;
+    char **args = safe_malloc(sizeof(char *) * command_line_buffer_length);
+    char *token = safe_malloc(sizeof(char) * token_buffer_length);
+    size_t string_length = 0, array_length = 0;
     int first_space = 0; // true = 1, false = 0
     // getc consumes a character per input
     while ((ch = getc(stdin)) != EOF) {
+        if (string_length + 1 >= token_buffer_length) {
+            token = realloc_buffer(token, &token_buffer_length);
+        }
+        if (array_length + 1 >= command_line_buffer_length) {
+            args = realloc_buffer(args, &command_line_buffer_length);
+        }
+
         if (ch == NEWLINE && !token[0]) {
             fprintf(stdout, "MyShell> ");
-        } else if (ch == NEWLINE) {
+        } else if (ch == NEWLINE) { // finalize command line
             token[string_length] = NULLCHAR;
+            token = realloc_leftover_string(token, string_length);
             *(args + array_length) = token; // store the last token
             array_length++;
             *(args + array_length) = NULL; // null-terminate the args array
             break;
         } else if (ch == ' ' && !first_space) { // add new token when a space is pressed
             token[string_length] = NULLCHAR;
+            if (string_length < token_buffer_length) {
+                token = realloc_leftover_string(token, string_length);
+            }
             *(args + array_length) = token;
             array_length++;
-            token = safe_malloc(sizeof(char) * token_buffer_size);
+            token_buffer_length = MAX_STR_BUFFER;
+            token = safe_malloc(sizeof(char) * token_buffer_length);
             string_length = 0;
             first_space = 1;
         } else if (ch != ' ') {
@@ -132,7 +141,6 @@ char** parse(void)
             first_space = 0;
         }
     }
-
     return args;
 }
 
@@ -156,22 +164,40 @@ void free_args(char **args)
     free(args);
 }
 
+
 /**
- * Allocate SIZE bytes of memory with error checking.
+ * Reallocates the current buffer memory with error checking.
  * 
- * @param token The string buffer to resize
- * @param string_length The number of bytes + 1 to reallocate
+ * @param ptr The pointer buffer to resize
+ * @param current_buffer The current size of the buffer
  * @note Exits with status 1 if memory reallocation fails
  */
-void free_leftover_string(char *token, int string_length) {
-    char *resized_token = realloc(token, string_length + 1); // manage unused memory
+void* realloc_buffer(void *ptr, size_t *current_buffer) {
+    *current_buffer *= 2;
+    char *new_ptr = realloc(ptr, sizeof(ptr) * *current_buffer); // increase
+    if (new_ptr == NULL) {
+        fprintf(stderr, "Memory allocation failed for size %zu\n", *current_buffer);
+        free(ptr); // Free original buffer if realloc fails
+        exit(1);
+    }
+    return new_ptr;
+}
+
+/**
+ * Reallocates the token with with error checking.
+ * 
+ * @param token The string buffer to resize
+ * @param string_length The length of the current token
+ * @note Exits with status 1 if memory reallocation fails
+ */
+void* realloc_leftover_string(char *token, size_t string_length) {
+    char *resized_token = realloc(token, sizeof(token) * (string_length + 1)); // manage unused memory
     if (resized_token == NULL) {
-        fprintf(stderr, "Failed to reallocate memory");
+        fprintf(stderr, "Memory allocation failed for size %zu\n", string_length + 1);
         free(token); // Free original buffer if realloc fails
         exit(1);
     }
-    token = resized_token;
-    return;
+    return resized_token;
 }
 
 /**
