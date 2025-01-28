@@ -1,11 +1,26 @@
 # TODO
-- [] Implement command history
+
+## BIG BOY
 - [] Implement cd or change directory
-- [] Implement buffer for infinite input
+- [] Implement command chaining '&&', '|', '||', ';'
+    - [] break up args array into multiple args and executions (***cmds?)
+- [] Implement left/right keys or move around command line
+
+## SMALL BOY
+- [] Implement command history
+- [] Implement dynamic buffer for infinite input
 - [] comment stuff
+- [] account for quotes/other delimiters
 
 
-# working ideas for cd:
+# NOTES
+
+# accounting for backspaces???
+# Keep breaking up functionality.
+# execve vs. execvp
+# learn more about character-to-character scanning
+
+## working ideas for cd:
 ```c
     if (strcmp(args[0], "cd") == 0) {
         // Handle the cd command
