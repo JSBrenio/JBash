@@ -1,5 +1,8 @@
 # TODO
 
+## BIGGEST BOY
+- [] globbing
+
 ## BIG BOY
 - [] Implement cd or change directory
 - [] Implement command chaining '&&', '|', '||', ';'
@@ -15,6 +18,7 @@
 
 # NOTES
 
+# Juhua gave the greenlight
 # accounting for backspaces???
 # Keep breaking up functionality.
 # execve vs. execvp

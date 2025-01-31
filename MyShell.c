@@ -10,12 +10,13 @@
  * 
  */
 #include <stdio.h> // fprintf, getc
-#include <stdlib.h> // malloc, realloc, exit
-#include <unistd.h> // fork & exec
+#include <stdlib.h> // malloc, realloc, free, execvp, exit, EXIT_SUCCESS
+#include <unistd.h> // fork
 #include <string.h> // strcmp, strerror
 #include <stddef.h> // for NULL
 #include <sys/wait.h> // wait
 #include <errno.h> // access the errno variable
+#include <termios.h> // to read character by character
 
 
 /**
@@ -28,7 +29,6 @@ DONOT change the existing function definitions. You can add functions, if necess
     AND to provide most of the documentation.
 */
 
-#define EXIT_SUCCESS 0
 #define MAX_STR_BUFFER 16
 #define CMD_LINE_BUFFER 16
 #define NEWLINE '\n'
@@ -40,6 +40,11 @@ void* realloc_buffer(void *ptr, size_t *current_buffer);
 void* realloc_leftover_string(char *token, size_t string_length);
 void *safe_malloc(size_t size);
 void free_args(char **args);
+void disable_raw_mode();
+void enable_raw_mode();
+void handle_up_key();
+
+static struct termios original_tio;
 
 /**
    @brief Main function should run infinitely until terminated manually using CTRL+C or typing in the exit command
@@ -49,11 +54,13 @@ void free_args(char **args);
    @return status code
  */
 int main(int argc, char **argv)
-{
+{   
     char **args; // pointer to pointers of null terminating strings
     int status;
     while (1) {
-        fprintf(stdout, "MyShell> ");
+        // Default stdout buffer size is typically 4096 bytes
+        printf("MyShell> "); // Writes to buffer
+        fflush(stdout);      // Forces immediate display of prompt
         args = parse();
         status = execute(args);
         free_args(args);
@@ -73,8 +80,12 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
-    //printf("Executing command: %s\n", args[0]);
-    if (strcmp(args[0], "exit") == 0) { // command exit check to terminate shell
+    int i = 0;
+    while (args[i] != NULL) {
+        printf("arg[%d]: %s\n", i, args[i]);
+        i++;
+    }
+    if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         return 0;
     }
     int rc = fork();
@@ -106,8 +117,9 @@ char** parse(void)
     char *token = safe_malloc(sizeof(char) * token_buffer_length);
     size_t string_length = 0, array_length = 0;
     int first_space = 0; // true = 1, false = 0
-    // getc consumes a character per input
-    while ((ch = getc(stdin)) != EOF) {
+    enable_raw_mode();
+    while (read(STDIN_FILENO, &ch, 1) == 1) {
+        // buffer checks
         if (string_length + 1 >= token_buffer_length) {
             token = realloc_buffer(token, &token_buffer_length);
         }
@@ -116,15 +128,42 @@ char** parse(void)
         }
 
         if (ch == NEWLINE && !token[0]) {
-            fprintf(stdout, "MyShell> ");
+            fprintf(stdout, "\nMyShell> ");
+        }  else if (ch == 0x03) {  // Ctrl+C
+            fprintf(stdout, "^C\n");
+            exit(1);
+        } else if (ch == '\033') { // terminal sends 3 bytes in sequence
+            char seq[3]; // seq[0] = '[', seq[1] = Letter code
+            if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
+            if (read(STDIN_FILENO, &seq[1], 1) != 1) break;
+
+            if (seq[0] == '[') {
+                switch (seq[1]) {
+                    case 'A': // Up arrow
+                        break;
+                    case 'B': // Down arrow
+                        break;
+                    case 'C': // Right arrow
+                        if (string_length <= strlen(token)) {
+                            fprintf(stdout, "\033[1C");  // Move cursor right
+                        }
+                        break;
+                    case 'D': // Left arrow
+                        if (string_length >= strlen(token)) {
+                            fprintf(stdout, "\033[1D");  // Move cursor left
+                        }
+                        break;
+                }
+            }
         } else if (ch == NEWLINE) { // finalize command line
+            fprintf(stdout, "\r\n");  // Move to next line
             token[string_length] = NULLCHAR;
             token = realloc_leftover_string(token, string_length);
             *(args + array_length) = token; // store the last token
             array_length++;
             *(args + array_length) = NULL; // null-terminate the args array
             break;
-        } else if (ch == ' ' && !first_space) { // add new token when a space is pressed
+        } else if (ch == ' ' && first_space == 0) { // add new token when a space is pressed
             token[string_length] = NULLCHAR;
             if (string_length < token_buffer_length) {
                 token = realloc_leftover_string(token, string_length);
@@ -135,12 +174,25 @@ char** parse(void)
             token = safe_malloc(sizeof(char) * token_buffer_length);
             string_length = 0;
             first_space = 1;
+            printf("%c", ch);
+        } else if (ch == 127 || ch == '\b') {
+            if (string_length != 0 && array_length == 0) {
+            printf("\b \b");  // Move back, print space, move back again
+            string_length--;
+            }
         } else if (ch != ' ') {
             token[string_length] = ch;
             string_length++;
             first_space = 0;
+            printf("%c", ch);
         }
+        else {
+            printf("%c", ch);  // Echo character
+        } 
+        fflush(stdout); // flushes character out i.e. prints what's queued up.
     }
+    disable_raw_mode();
+
     return args;
 }
 
@@ -214,4 +266,47 @@ void* safe_malloc(size_t size) {
         exit(1);
     }
     return ptr;
+}
+
+/**
+ * @brief Disables raw mode and restores the terminal to its original settings
+ * This function is called when exiting the program to restore normal terminal behavior
+ */
+void disable_raw_mode() {
+    // Attempt to restore original terminal settings. TCSAFLUSH will wait for all output to be transmitted
+    // and discards any unread input before applying the changes
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_tio) == -1) {
+        perror("tcsetattr"); // Print error message if restoration fails
+    }
+}
+
+/**
+ * @brief Enables raw mode for terminal input
+ * Raw mode allows reading input character by character without waiting for Enter
+ * and without showing typed characters (no echo)
+ */
+void enable_raw_mode() {
+    // Save the original terminal settings so we can restore them later
+    if (tcgetattr(STDIN_FILENO, &original_tio) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Register disable_raw_mode to be called automatically when program exits
+    atexit(disable_raw_mode);
+
+    // Create new terminal settings based on original ones
+    struct termios raw = original_tio;
+    
+    // Modify settings:
+    // ICANON - Disable canonical mode (input is processed character by character)
+    // ECHO - Disable automatic echo of input characters
+    // using negation and logical AND to change bitmask flags
+    raw.c_lflag &= ~(ICANON | ECHO);
+
+    // Apply the new settings
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
 }
