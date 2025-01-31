@@ -37,7 +37,7 @@ DONOT change the existing function definitions. You can add functions, if necess
 int execute(char **args);
 char** parse(void);
 void* realloc_buffer(void *ptr, size_t *current_buffer);
-void* realloc_leftover_string(char *token, size_t string_length);
+void* realloc_leftover_string(char *string, size_t string_length);
 void *safe_malloc(size_t size);
 void free_args(char **args);
 void disable_raw_mode();
@@ -80,11 +80,11 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
-    int i = 0;
-    while (args[i] != NULL) {
-        printf("arg[%d]: %s\n", i, args[i]);
-        i++;
-    }
+    // int i = 0;
+    // while (args[i] != NULL) {
+    //     printf("arg[%d]:  %s\n", i, args[i]);
+    //     i++;
+    // }
     if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         return 0;
     }
@@ -112,22 +112,19 @@ char** parse(void)
 {
     char ch;
     size_t command_line_buffer_length = CMD_LINE_BUFFER;
-    size_t token_buffer_length = MAX_STR_BUFFER;
+    size_t string_buffer_length = MAX_STR_BUFFER;
     char **args = safe_malloc(sizeof(char *) * command_line_buffer_length);
-    char *token = safe_malloc(sizeof(char) * token_buffer_length);
+    char *string = safe_malloc(sizeof(char) * string_buffer_length);
     size_t string_length = 0, array_length = 0;
     int first_space = 0; // true = 1, false = 0
+    size_t cursor = 0;
     enable_raw_mode();
     while (read(STDIN_FILENO, &ch, 1) == 1) {
         // buffer checks
-        if (string_length + 1 >= token_buffer_length) {
-            token = realloc_buffer(token, &token_buffer_length);
+        if (string_length + 1 >= string_buffer_length) {
+            string = realloc_buffer(string, &string_buffer_length);
         }
-        if (array_length + 1 >= command_line_buffer_length) {
-            args = realloc_buffer(args, &command_line_buffer_length);
-        }
-
-        if (ch == NEWLINE && !token[0]) {
+        if (ch == NEWLINE && !string[0]) {
             fprintf(stdout, "\nMyShell> ");
         }  else if (ch == 0x03) {  // Ctrl+C
             fprintf(stdout, "^C\n");
@@ -144,54 +141,88 @@ char** parse(void)
                     case 'B': // Down arrow
                         break;
                     case 'C': // Right arrow
-                        if (string_length <= strlen(token)) {
+                        if (cursor < string_length) {
                             fprintf(stdout, "\033[1C");  // Move cursor right
+                            cursor++;
                         }
                         break;
                     case 'D': // Left arrow
-                        if (string_length >= strlen(token)) {
+                        if (cursor > 0) {
                             fprintf(stdout, "\033[1D");  // Move cursor left
+                            cursor--;
                         }
                         break;
                 }
             }
         } else if (ch == NEWLINE) { // finalize command line
             fprintf(stdout, "\r\n");  // Move to next line
-            token[string_length] = NULLCHAR;
-            token = realloc_leftover_string(token, string_length);
-            *(args + array_length) = token; // store the last token
-            array_length++;
-            *(args + array_length) = NULL; // null-terminate the args array
+            string = realloc_leftover_string(string, string_length);
+            string[string_length] = NULLCHAR;
+            *(args) = string;
+            *(args + 1) = NULL; // null-terminate the args array
             break;
-        } else if (ch == ' ' && first_space == 0) { // add new token when a space is pressed
-            token[string_length] = NULLCHAR;
-            if (string_length < token_buffer_length) {
-                token = realloc_leftover_string(token, string_length);
-            }
-            *(args + array_length) = token;
-            array_length++;
-            token_buffer_length = MAX_STR_BUFFER;
-            token = safe_malloc(sizeof(char) * token_buffer_length);
-            string_length = 0;
-            first_space = 1;
-            printf("%c", ch);
-        } else if (ch == 127 || ch == '\b') {
-            if (string_length != 0 && array_length == 0) {
-            printf("\b \b");  // Move back, print space, move back again
+        } else if ((ch == 127 || ch == '\b') && cursor != 0) { // handle back spacing
+            memmove(&string[cursor-1], &string[cursor], string_length - cursor); // truncate string of deleted char
             string_length--;
+            cursor--;
+
+            // Update display
+            fprintf(stdout, "\b");  // Move back
+            // Reprint rest of string
+            for (size_t i = cursor; i < string_length; i++) {
+                fprintf(stdout, "%c", string[i]);
             }
-        } else if (ch != ' ') {
-            token[string_length] = ch;
-            string_length++;
-            first_space = 0;
-            printf("%c", ch);
+            fprintf(stdout, " ");  // Clear character
+            
+            // Reset cursor position
+            fprintf(stdout, "\033[%zuD", string_length - cursor + 1);
+        } else {
+            if (cursor < string_length) {
+                // Shift characters right
+                memmove(&string[cursor + 1], &string[cursor], string_length - cursor);
+                
+                // Insert new character
+                string[cursor] = ch;
+                string_length++;
+                cursor++;
+                
+                // Update display
+                fprintf(stdout, "%c", ch);           // Print new char
+                fprintf(stdout, "\033[K");           // Clear line after cursor
+                fprintf(stdout, "%s", &string[cursor]); // Print rest of string
+                fprintf(stdout, "\033[%zuD", string_length - cursor); // Reset cursor
+            } else {
+                fprintf(stdout, "%c", ch);
+                string[cursor] = ch;
+                cursor++;
+                string_length++;
+            }
         }
-        else {
-            printf("%c", ch);  // Echo character
-        } 
         fflush(stdout); // flushes character out i.e. prints what's queued up.
     }
     disable_raw_mode();
+    string = realloc_leftover_string(string, string_length);
+
+    char *word_start = string;  // Track start of current word
+    for (int i = 0; i < string_length; i++) {
+        if (array_length + 1 >= command_line_buffer_length) {
+            args = realloc_buffer(args, &command_line_buffer_length);
+        }
+        
+        if (string[i] == ' ') {
+            string[i] = '\0';  // Null terminate word
+            args[array_length] = word_start;  // Add to args
+            array_length++;
+            word_start = &string[i + 1];  // Start of next word
+        }
+    }
+
+    // Add final word if exists
+    if (word_start[0] != '\0') {
+        args[array_length] = word_start;
+        array_length++;
+    }
+    args[array_length] = NULL;  // Null terminate args array
 
     return args;
 }
@@ -208,10 +239,9 @@ char** parse(void)
  */
 void free_args(char **args)
 {
-    int i = 0;
-    while (args[i] != NULL) {
-        free(args[i]);
-        i++;
+    // Free the first string (original buffer)
+    if (args[0] != NULL) {
+        free(args[0]);
     }
     free(args);
 }
@@ -238,18 +268,18 @@ void* realloc_buffer(void *ptr, size_t *current_buffer) {
 /**
  * Reallocates the token with with error checking.
  * 
- * @param token The string buffer to resize
+ * @param string The string buffer to resize
  * @param string_length The length of the current token
  * @note Exits with status 1 if memory reallocation fails
  */
-void* realloc_leftover_string(char *token, size_t string_length) {
-    char *resized_token = realloc(token, sizeof(token) * (string_length + 1)); // manage unused memory
-    if (resized_token == NULL) {
+void* realloc_leftover_string(char *string, size_t string_length) {
+    char *resized_string = realloc(string, sizeof(string) * (string_length + 1)); // manage unused memory
+    if (resized_string == NULL) {
         fprintf(stderr, "Memory allocation failed for size %zu\n", string_length + 1);
-        free(token); // Free original buffer if realloc fails
+        free(string); // Free original buffer if realloc fails
         exit(1);
     }
-    return resized_token;
+    return resized_string;
 }
 
 /**
