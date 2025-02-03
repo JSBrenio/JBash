@@ -9,14 +9,14 @@
  * @brief Core header files for shell implementation
  * 
  */
-#include <stdio.h> // fprintf, getc
-#include <stdlib.h> // malloc, realloc, free, execvp, exit, EXIT_SUCCESS
+#include <stdio.h> // fprintf, fflush, read, STDIN_FILENO
+#include <stdlib.h> // malloc, realloc, free, execvp, exit, EXIT_SUCCESS, atexit
 #include <unistd.h> // fork
 #include <string.h> // strcmp, strerror
-#include <stddef.h> // for NULL
+#include <stddef.h> // for NULL, size_t (unsigned integer)
 #include <sys/wait.h> // wait
 #include <errno.h> // access the errno variable
-#include <termios.h> // to read character by character
+#include <termios.h> // to read character by character, tcgetattr, tcsetattr, TCSAFLUSH
 
 
 /**
@@ -33,6 +33,7 @@ DONOT change the existing function definitions. You can add functions, if necess
 #define CMD_LINE_BUFFER 16
 #define NEWLINE '\n'
 #define NULLCHAR '\0'
+#define SHELL_NAME "MyShell> "
 
 int execute(char **args);
 char** parse(void);
@@ -59,7 +60,7 @@ int main(int argc, char **argv)
     int status;
     while (1) {
         // Default stdout buffer size is typically 4096 bytes
-        printf("MyShell> "); // Writes to buffer
+        printf(SHELL_NAME); // Writes to buffer
         fflush(stdout);      // Forces immediate display of prompt
         args = parse();
         status = execute(args);
@@ -124,15 +125,18 @@ char** parse(void)
             string = realloc_buffer(string, &string_buffer_length);
         }
         if (ch == NEWLINE && !string[0]) {
-            fprintf(stdout, "\nMyShell> ");
+            fprintf(stdout, "\n%s", SHELL_NAME);
         }  else if (ch == 0x03) {  // Ctrl+C
             fprintf(stdout, "^C\n");
             exit(1);
-        } else if (ch == '\033') { // terminal sends 3 bytes in sequence
+        }
+        // '\033' represents the ASCII escape character (27 in decimal, 0x1B in hex)
+        else if (ch == '\033') { // terminal sends 3 bytes in sequence
             char seq[3]; // seq[0] = '[', seq[1] = Letter code
             if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
             if (read(STDIN_FILENO, &seq[1], 1) != 1) break;
 
+            // '[' is the Control Sequence Introducer (CSI)
             if (seq[0] == '[') {
                 switch (seq[1]) {
                     case 'A': // Up arrow
@@ -140,12 +144,16 @@ char** parse(void)
                     case 'B': // Down arrow
                         break;
                     case 'C': // Right arrow
+                        // 1 is the number of units to move
+                        // C is the command code for "Cursor Forward"
                         if (cursor < string_length) {
                             fprintf(stdout, "\033[1C");  // Move cursor right
                             cursor++;
                         }
                         break;
                     case 'D': // Left arrow
+                        // 1 is the number of units to move
+                        // D is the command code for "Cursor Backward"
                         if (cursor > 0) {
                             fprintf(stdout, "\033[1D");  // Move cursor left
                             cursor--;
@@ -156,8 +164,6 @@ char** parse(void)
         } else if (ch == NEWLINE) { // finalize command line
             fprintf(stdout, "\n");  // Move to next line
             string[string_length] = NULLCHAR;
-            *(args) = string;
-            *(args + 1) = NULL; // null-terminate the args array
             break;
         } else if ((ch == 127 || ch == '\b') && cursor != 0) { // handle back spacing
             // shift characters left
@@ -165,13 +171,13 @@ char** parse(void)
             // Initial:    "Hello World"    (delete 'W')
             //              01234567890
             //                     ^
-            // 1. Source:  "World"          (substring starting from cursor position)
-            // 2. Dest:    "orld"           (shifted one position left, starting from cursor-1 position)
+            // 1. Source:        "World"    (substring starting from cursor position)
+            // 2. Dest:          "orld"     (shifted one position left, starting from cursor-1 position)
             // 3. memmove: Moves the substring to the left, overwriting the characters at cursor-1
             // 4. Result:  "Hello orld"
             //              0123456789
             //                    ^
-            memmove(&string[cursor-1], &string[cursor], string_length - cursor); // truncate string of deleted char
+            memmove(&string[cursor-1], &string[cursor], string_length - cursor);
             string_length--;
             cursor--;
 
@@ -183,7 +189,7 @@ char** parse(void)
             }
             fprintf(stdout, " ");  // Clear character
             
-            // Reset cursor position
+            // Reset cursor position by moving cursor back
             fprintf(stdout, "\033[%zuD", string_length - cursor + 1);
         } else {
             if (cursor < string_length) { // substring insertions
@@ -192,8 +198,8 @@ char** parse(void)
                 // Initial:    "Hello World"   (inserting an 'x')
                 //              01234567890
                 //                    ^
-                // 1. Source:  "World"         (substring starting from cursor position)
-                // 2. Dest:    "xWorld"        (shifted one position right, starting from cursor+1 position)
+                // 1. Source:        "World"   (substring starting from cursor position)
+                // 2. Dest:          "xWorld"  (shifted one position right, starting from cursor+1 position)
                 // 3. memmove:  Moves the substring to the right, overwriting the characters at cursor+1
                 // 4. Result:  "Hello xWorld"
                 //              012345678901
