@@ -1,2 +1,2 @@
-# JSBash
-Jeremiah Sibal Brenio awesome SHell
+# JBash
+Jeremiah Brenio awesome SHell
