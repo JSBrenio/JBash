@@ -37,7 +37,7 @@ DONOT change the existing function definitions. You can add functions, if necess
 int execute(char **args);
 char** parse(void);
 void* realloc_buffer(void *ptr, size_t *current_buffer);
-void* realloc_leftover_string(char *string, size_t string_length);
+void* realloc_leftover_string(char *string, size_t *string_length);
 void *safe_malloc(size_t size);
 void free_args(char **args);
 void disable_raw_mode();
@@ -154,13 +154,23 @@ char** parse(void)
                 }
             }
         } else if (ch == NEWLINE) { // finalize command line
-            fprintf(stdout, "\r\n");  // Move to next line
-            string = realloc_leftover_string(string, string_length);
+            fprintf(stdout, "\n");  // Move to next line
             string[string_length] = NULLCHAR;
             *(args) = string;
             *(args + 1) = NULL; // null-terminate the args array
             break;
         } else if ((ch == 127 || ch == '\b') && cursor != 0) { // handle back spacing
+            // shift characters left
+            // Step by step visualization of backspacing with memmove:
+            // Initial:    "Hello World"    (delete 'W')
+            //              01234567890
+            //                     ^
+            // 1. Source:  "World"          (substring starting from cursor position)
+            // 2. Dest:    "orld"           (shifted one position left, starting from cursor-1 position)
+            // 3. memmove: Moves the substring to the left, overwriting the characters at cursor-1
+            // 4. Result:  "Hello orld"
+            //              0123456789
+            //                    ^
             memmove(&string[cursor-1], &string[cursor], string_length - cursor); // truncate string of deleted char
             string_length--;
             cursor--;
@@ -176,8 +186,19 @@ char** parse(void)
             // Reset cursor position
             fprintf(stdout, "\033[%zuD", string_length - cursor + 1);
         } else {
-            if (cursor < string_length) {
+            if (cursor < string_length) { // substring insertions
                 // Shift characters right
+                // Step by step visualization of inserting with memmove:
+                // Initial:    "Hello World"   (inserting an 'x')
+                //              01234567890
+                //                    ^
+                // 1. Source:  "World"         (substring starting from cursor position)
+                // 2. Dest:    "xWorld"        (shifted one position right, starting from cursor+1 position)
+                // 3. memmove:  Moves the substring to the right, overwriting the characters at cursor+1
+                // 4. Result:  "Hello xWorld"
+                //              012345678901
+                //                     ^
+
                 memmove(&string[cursor + 1], &string[cursor], string_length - cursor);
                 
                 // Insert new character
@@ -190,27 +211,26 @@ char** parse(void)
                 fprintf(stdout, "\033[K");           // Clear line after cursor
                 fprintf(stdout, "%s", &string[cursor]); // Print rest of string
                 fprintf(stdout, "\033[%zuD", string_length - cursor); // Reset cursor
-            } else {
-                fprintf(stdout, "%c", ch);
+            } else { // end of line insertions
+                fprintf(stdout, "%c", ch); // Print new char
+                // Insert new character
                 string[cursor] = ch;
                 cursor++;
                 string_length++;
             }
         }
-        fflush(stdout); // flushes character out i.e. prints what's queued up.
+        fflush(stdout); // flushes character out, essentially prints what's queued up.
     }
     disable_raw_mode();
-    string = realloc_leftover_string(string, string_length);
+    string = realloc_leftover_string(string, &string_length);
 
-    char *word_start = string;  // Track start of current word
     int first_space = 0; // true = 1, false = 0
+    char *word_start = string;  // Track start of current word
     for (int i = 0; i < string_length; i++) {
         if (array_length + 1 >= command_line_buffer_length) {
             args = realloc_buffer(args, &command_line_buffer_length);
         }
-        if (string[i] == ' ' && array_length == 0) {
-            continue;
-        } else if (string[i] == ' ' && string[i + 1] != ' ') {
+        if (string[i] == ' ' || string[i] == NULLCHAR) {
             string[i] = NULLCHAR;  // Null terminate word
             args[array_length] = word_start;  // Add to args
             array_length++;
@@ -240,7 +260,7 @@ char** parse(void)
  */
 void free_args(char **args)
 {
-    // Free the first string (original buffer)
+    // Free the first string (original Command Line buffer)
     if (args[0] != NULL) {
         free(args[0]);
     }
@@ -273,10 +293,18 @@ void* realloc_buffer(void *ptr, size_t *current_buffer) {
  * @param string_length The length of the current token
  * @note Exits with status 1 if memory reallocation fails
  */
-void* realloc_leftover_string(char *string, size_t string_length) {
-    char *resized_string = realloc(string, sizeof(string) * (string_length + 1)); // manage unused memory
+void* realloc_leftover_string(char *string, size_t *string_length) {
+    size_t i = 0;
+    while (string[i] == ' ') {
+        i++;
+    }
+    if (i != 0) {
+        memmove(string, string + i, *string_length - i + 1); // + 1 to account for null char
+        *string_length -= i;
+    }
+    char *resized_string = realloc(string, sizeof(string) * (*string_length + 1)); // manage unused memory
     if (resized_string == NULL) {
-        fprintf(stderr, "Memory allocation failed for size %zu\n", string_length + 1);
+        fprintf(stderr, "Memory allocation failed for size %zu\n", *string_length + 1);
         free(string); // Free original buffer if realloc fails
         exit(1);
     }
