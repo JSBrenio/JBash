@@ -80,11 +80,11 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
-    // int i = 0;
-    // while (args[i] != NULL) {
-    //     printf("arg[%d]:  %s\n", i, args[i]);
-    //     i++;
-    // }
+    int i = 0;
+    while (args[i] != NULL) {
+        printf("arg[%d]:  %s\n", i, args[i]);
+        i++;
+    }
     if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         return 0;
     }
@@ -116,7 +116,6 @@ char** parse(void)
     char **args = safe_malloc(sizeof(char *) * command_line_buffer_length);
     char *string = safe_malloc(sizeof(char) * string_buffer_length);
     size_t string_length = 0, array_length = 0;
-    int first_space = 0; // true = 1, false = 0
     size_t cursor = 0;
     enable_raw_mode();
     while (read(STDIN_FILENO, &ch, 1) == 1) {
@@ -204,13 +203,15 @@ char** parse(void)
     string = realloc_leftover_string(string, string_length);
 
     char *word_start = string;  // Track start of current word
+    int first_space = 0; // true = 1, false = 0
     for (int i = 0; i < string_length; i++) {
         if (array_length + 1 >= command_line_buffer_length) {
             args = realloc_buffer(args, &command_line_buffer_length);
         }
-        
-        if (string[i] == ' ') {
-            string[i] = '\0';  // Null terminate word
+        if (string[i] == ' ' && array_length == 0) {
+            continue;
+        } else if (string[i] == ' ' && string[i + 1] != ' ') {
+            string[i] = NULLCHAR;  // Null terminate word
             args[array_length] = word_start;  // Add to args
             array_length++;
             word_start = &string[i + 1];  // Start of next word
@@ -218,7 +219,7 @@ char** parse(void)
     }
 
     // Add final word if exists
-    if (word_start[0] != '\0') {
+    if (word_start[0] != NULLCHAR) {
         args[array_length] = word_start;
         array_length++;
     }
