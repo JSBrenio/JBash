@@ -43,7 +43,6 @@ void *safe_malloc(size_t size);
 void free_args(char **args);
 void disable_raw_mode();
 void enable_raw_mode();
-void handle_up_key();
 
 static struct termios original_tio;
 
