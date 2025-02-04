@@ -1,4 +1,4 @@
-/***************************************************************************//**
+/*******************************************************************************
   @file         MyShell.c
   @author       Juhua Hu, Jeremiah Brenio
 
@@ -165,24 +165,29 @@ char** parse(void)
             fprintf(stdout, "\n");  // Move to next line
             string[string_length] = NULLCHAR;
             break;
-        } else if ((ch == 127 || ch == '\b') && cursor != 0) { // handle back spacing
+        } else if ((ch == 127 || ch == '\b')) { // handle back spacing
+            if (cursor <= 0) { // boundary check
+                continue;
+            }
             // shift characters left
             // Step by step visualization of backspacing with memmove:
             // Initial:    "Hello World"    (delete 'W')
-            //              01234567890
+            //              01234567890      string_length = 11, cursor = 7
             //                     ^
             // 1. Source:        "World"    (substring starting from cursor position)
             // 2. Dest:          "orld"     (shifted one position left, starting from cursor-1 position)
             // 3. memmove: Moves the substring to the left, overwriting the characters at cursor-1
             // 4. Result:  "Hello orld"
-            //              0123456789
+            //              0123456789       string_length = 10, cursor = 6
             //                    ^
-            memmove(&string[cursor-1], &string[cursor], string_length - cursor);
+            memmove(&string[cursor-1], &string[cursor], string_length - cursor + 1); // + 1 to avoid bugs
             string_length--;
             cursor--;
 
             // Update display
             fprintf(stdout, "\b");  // Move back
+            //fprintf(stdout, "\033[K");  // Clear line from cursor to end
+
             // Reprint rest of string
             for (size_t i = cursor; i < string_length; i++) {
                 fprintf(stdout, "%c", string[i]);
@@ -196,16 +201,16 @@ char** parse(void)
                 // Shift characters right
                 // Step by step visualization of inserting with memmove:
                 // Initial:    "Hello World"   (inserting an 'x')
-                //              01234567890
+                //              01234567890     string_length = 11, cursor = 6
                 //                    ^
                 // 1. Source:        "World"   (substring starting from cursor position)
                 // 2. Dest:          "xWorld"  (shifted one position right, starting from cursor+1 position)
                 // 3. memmove:  Moves the substring to the right, overwriting the characters at cursor+1
                 // 4. Result:  "Hello xWorld"
-                //              012345678901
+                //              012345678901    string_length = 12, cursor = 7
                 //                     ^
 
-                memmove(&string[cursor + 1], &string[cursor], string_length - cursor);
+                memmove(&string[cursor + 1], &string[cursor], string_length - cursor + 1); // + 1 to avoid bugs
                 
                 // Insert new character
                 string[cursor] = ch;
@@ -230,17 +235,29 @@ char** parse(void)
     disable_raw_mode();
     string = realloc_leftover_string(string, &string_length);
 
-    int first_space = 0; // true = 1, false = 0
+    int extra_whitespace = 0; // keep track of extra whitespace
     char *word_start = string;  // Track start of current word
     for (int i = 0; i < string_length; i++) {
         if (array_length + 1 >= command_line_buffer_length) {
             args = realloc_buffer(args, &command_line_buffer_length);
         }
-        if (string[i] == ' ' || string[i] == NULLCHAR) {
-            string[i] = NULLCHAR;  // Null terminate word
+
+        if (string[i] == '"') {
+            i++;
+            word_start = &string[i];
+            while (string[i] != '"') i++;
+            string[i] = NULLCHAR;  // Null terminate word excluding '"'
             args[array_length] = word_start;  // Add to args
             array_length++;
             word_start = &string[i + 1];  // Start of next word
+        } else if (string[i] == ' ' && string[i + 1] != ' ') { // end of word
+            string[i - extra_whitespace] = NULLCHAR;  // Null terminate word accounting for multiple whitespace
+            args[array_length] = word_start;  // Add to args
+            array_length++;
+            word_start = &string[i + 1];  // Start of next word
+            extra_whitespace = 0;
+        } else if (string[i] == ' ' && string[i + 1] == ' ') { // extra whitespace
+            extra_whitespace++;
         }
     }
 
