@@ -2,16 +2,17 @@
 
 ## BIGGEST BOY
 - [] globbing
+- [] Implement Autocompletion
 
 ## BIG BOY
-- [] Implement cd or change directory
+- [x] Implement cd or change directory / chdir
 - [] Implement command chaining '&&', '|', '||', ';'
     - [] break up args array into multiple args and executions (***cmds?)
-- [] Implement left/right keys or move around command line
+- [x] Implement left/right keys or move around command line
 
 ## SMALL BOY
 - [] Implement command history
-- [] Implement dynamic buffer for infinite input
+- [x] Implement dynamic buffer for infinite input
 - [] comment stuff
 - [] account for quotes/other delimiters
 
