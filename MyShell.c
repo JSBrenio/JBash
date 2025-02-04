@@ -111,7 +111,7 @@ int execute(char **args)
     // for non-shell implemented system calls
     int rc = fork();
     if (rc == -1) {
-        fprintf(stderr, "Fork failed\n", strerror(errno));
+        fprintf(stderr, "Fork failed: %s\n", strerror(errno));
         return 0;
     } else if (rc == 0) {
         int status = execvp(args[0], args);
@@ -200,7 +200,7 @@ char** parse(void)
             // 2. Dest:          "orld"     (shifted one position left, starting from cursor-1 position)
             // 3. memmove: Moves the substring to the left, overwriting the characters at cursor-1
             // 4. Result:  "Hello orld"
-            //              0123456789       string_length = 10, cursor = 6
+            //              0123456789       string_length = 10, cursor = 6, bytes to copy = 5
             //                    ^
             memmove(&string[cursor-1], &string[cursor], string_length - cursor + 1); // + 1 to avoid bugs
             string_length--;
@@ -228,7 +228,7 @@ char** parse(void)
                 // 2. Dest:          "xWorld"  (shifted one position right, starting from cursor+1 position)
                 // 3. memmove:  Moves the substring to the right, overwriting the characters at cursor+1
                 // 4. Result:  "Hello xWorld"
-                //              012345678901    string_length = 12, cursor = 7
+                //              012345678901    string_length = 12, cursor = 7, bytes to copy = 6
                 //                     ^
 
                 memmove(&string[cursor + 1], &string[cursor], string_length - cursor + 1); // + 1 to avoid bugs
@@ -243,6 +243,7 @@ char** parse(void)
                 fprintf(stdout, "\033[K");           // Clear line after cursor
                 fprintf(stdout, "%s", &string[cursor]); // Print rest of string
                 fprintf(stdout, "\033[%zuD", string_length - cursor); // Reset cursor
+
             } else { // end of line insertions
                 fprintf(stdout, "%c", ch); // Print new char
                 // Insert new character
