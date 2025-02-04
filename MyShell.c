@@ -25,7 +25,7 @@ DONOT change the existing function definitions. You can add functions, if necess
 
 /*
     Note:
-    ChatGPT and man pages were only used to understand the functions of the included libraries
+    ChatGPT and man pages were only used to research/understand the functions of the included libraries
     AND to provide most of the documentation.
 */
 
@@ -33,7 +33,7 @@ DONOT change the existing function definitions. You can add functions, if necess
 #define CMD_LINE_BUFFER 16
 #define NEWLINE '\n'
 #define NULLCHAR '\0'
-#define SHELL_NAME "MyShell> "
+#define SHELL_NAME "\033[1;34mMyShell> \033[0m" //  Style: Bold; Color mode: Blue;
 
 int execute(char **args);
 char** parse(void);
@@ -61,7 +61,7 @@ int main(int argc, char **argv)
     while (1) {
         // Default stdout buffer size is typically 4096 bytes
         printf(SHELL_NAME); // Writes to buffer
-        fflush(stdout);      // Forces immediate display of prompt
+        fflush(stdout);     // Forces immediate display of prompt
         args = parse();
         status = execute(args);
         free_args(args);
@@ -81,13 +81,32 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
-    int i = 0;
-    while (args[i] != NULL) {
-        printf("arg[%d]:  %s\n", i, args[i]);
-        i++;
-    }
+    // FOR DEBUGGING
+    // int i = 0;
+    // while (args[i] != NULL) {
+    //     printf("arg[%d]:  %s\n", i, args[i]);
+    //     i++;
+    // }
     if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         return 0;
+    }
+    if (strcmp(args[0], "cd") == 0) { // command cd to change directory of current process
+        int status;
+        if (args[1] == NULL) { // try to default to home when given no argument for cd
+            status = chdir(getenv("HOME")); // chdir sys call to change path
+        } else {
+            status = chdir(args[1]);
+        }
+
+        if (status == 0) {
+            // FOR DEBUGGING
+            // char *cwd = getcwd(NULL, 0);
+            // fprintf(stdout, "Current Working Directory: %s\n", cwd);
+            // free(cwd);
+        } else {
+            fprintf(stderr, "Faillure to Change Directory: %s\n", strerror(errno));
+        }
+        return 1;
     }
     int rc = fork();
     if (rc == -1) {
@@ -129,14 +148,20 @@ char** parse(void)
         }  else if (ch == 0x03) {  // Ctrl+C
             fprintf(stdout, "^C\n");
             exit(1);
+        } else if (ch == NEWLINE) { // finalize command line
+            fprintf(stdout, "\n");  // Move to next line
+            string[string_length] = NULLCHAR;
+            break;
+        } else if (ch == '\t') { // Do nothing; future autocomplete feature
+            continue;
         }
         // '\033' represents the ASCII escape character (27 in decimal, 0x1B in hex)
         else if (ch == '\033') { // terminal sends 3 bytes in sequence
-            char seq[3]; // seq[0] = '[', seq[1] = Letter code
-            if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
+            char seq[3]; // Ideally: seq[0] = '[', seq[1] = Letter code
+            if (read(STDIN_FILENO, &seq[0], 1) != 1) break; // capture next chars
             if (read(STDIN_FILENO, &seq[1], 1) != 1) break;
 
-            // '[' is the Control Sequence Introducer (CSI)
+            // ANSI escape sequences, '[' is the Control Sequence Introducer (CSI)
             if (seq[0] == '[') {
                 switch (seq[1]) {
                     case 'A': // Up arrow
@@ -161,10 +186,6 @@ char** parse(void)
                         break;
                 }
             }
-        } else if (ch == NEWLINE) { // finalize command line
-            fprintf(stdout, "\n");  // Move to next line
-            string[string_length] = NULLCHAR;
-            break;
         } else if ((ch == 127 || ch == '\b')) { // handle back spacing
             if (cursor <= 0) { // boundary check
                 continue;
@@ -186,7 +207,6 @@ char** parse(void)
 
             // Update display
             fprintf(stdout, "\b");  // Move back
-            //fprintf(stdout, "\033[K");  // Clear line from cursor to end
 
             // Reprint rest of string
             for (size_t i = cursor; i < string_length; i++) {
@@ -242,10 +262,11 @@ char** parse(void)
             args = realloc_buffer(args, &command_line_buffer_length);
         }
 
-        if (string[i] == '"') {
+        if (i != 0 && (string[i] == '"' || string[i] == '\'')) {
+            char quote = string[i];
             i++;
             word_start = &string[i];
-            while (string[i] != '"') i++;
+            while (i < string_length && string[i] != quote) i++;
             string[i] = NULLCHAR;  // Null terminate word excluding '"'
             args[array_length] = word_start;  // Add to args
             array_length++;
