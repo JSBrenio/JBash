@@ -104,13 +104,14 @@ int execute(char **args)
             // fprintf(stdout, "Current Working Directory: %s\n", cwd);
             // free(cwd);
         } else {
-            fprintf(stderr, "Faillure to Change Directory: %s\n", strerror(errno));
+            fprintf(stderr, "Failure to Change Directory: %s\n", strerror(errno));
         }
         return 1;
     }
+    // for non-shell implemented system calls
     int rc = fork();
     if (rc == -1) {
-        fprintf(stderr, "fork failed\n");
+        fprintf(stderr, "Fork failed\n", strerror(errno));
         return 0;
     } else if (rc == 0) {
         int status = execvp(args[0], args);
