@@ -11,12 +11,13 @@
  */
 #include <stdio.h> // fprintf, fflush, read, STDIN_FILENO, perror
 #include <stdlib.h> // malloc, realloc, free, execvp, exit, EXIT_SUCCESS, atexit
-#include <unistd.h> // fork
-#include <string.h> // strcmp, strerror
+#include <unistd.h> // fork, chdir, STDOUT_FILENO, getcwd
+#include <string.h> // strcmp, strerror, memset
 #include <stddef.h> // for NULL, size_t (unsigned integer)
 #include <sys/wait.h> // wait
 #include <errno.h> // access the errno variable
 #include <termios.h> // to read character by character, tcgetattr, tcsetattr, TCSAFLUSH
+#include <signal.h> // to handle Ctrl+C
 
 /**
 DONOT change the existing function definitions. You can add functions, if necessary.
@@ -42,9 +43,9 @@ void *safe_malloc(size_t size);
 void free_args(char **args);
 void disable_raw_mode();
 void enable_raw_mode();
+void handle_sigint(int sig);
 
-// Original terminal settings
-static struct termios original_tio;
+static struct termios original_tio; // Original terminal settings
 
 /**
    @brief Main function should run infinitely until terminated manually using CTRL+C or typing in the exit command
@@ -55,6 +56,7 @@ static struct termios original_tio;
  */
 int main(int argc, char **argv)
 {   
+    signal(SIGINT, handle_sigint); // Set up signal handler for Ctrl+C (SIGINT)
     char **args; // pointer to pointers of null terminating strings
     int status; // status to check return of execute
     while (1) {
@@ -100,10 +102,11 @@ int execute(char **args)
     //     i++;
     // }
 
+    if (args[0] == NULL) {} // invalid input i.e. all whitespace, do nothing
     /**********************************************
     When the user types exit the program terminates
     **********************************************/
-    if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
+    else if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         rv = 0; // trigger termination
     }
     else if (strcmp(args[0], "cd") == 0) { // command 'cd' to change directory of current process
@@ -134,18 +137,20 @@ int execute(char **args)
             - The execvp command is appropriately implemented with the correct arguments
             ***************************************************************************/
             int status = execvp(args[0], args);
-            if (status = -1) {
+            if (status == -1) {
                 perror("Failure to Execute Command");
-                exit(1);
+                // free allocated memory of child process heap
+                free_args(args);
+                exit(EXIT_FAILURE);
             }
         } else {
             /******************************************************
             After fork, the parent waits for the child to terminate
             ******************************************************/
             wait(NULL);
-            return rv;
         }
     }
+    return rv;
 }
 
 /**
@@ -154,22 +159,27 @@ int execute(char **args)
  */
 char** parse(void)
 {
-    
+    // character of each keystroke input
     char ch;
+    // Starting buffer sizes
     size_t command_line_buffer_length = CMD_LINE_BUFFER;
     size_t string_buffer_length = STR_BUFFER;
     // allocate single string and array of tokens to heap.
     char **args = safe_malloc(sizeof(char *) * command_line_buffer_length);
     char *string = safe_malloc(sizeof(char) * string_buffer_length);
+    // Initialize the allocated memory with initial values with memset 
+    // which is similar to calloc to make sure there are no garbage values
+    memset(args, 0, sizeof(char *) * command_line_buffer_length);
+    memset(string, 0, sizeof(char) * string_buffer_length);
+    // Starting lengths
     size_t string_length = 0, array_length = 0;
     size_t cursor = 0; // cursor; where user is currently typing/editing
     enable_raw_mode(); // turn off canonical mode, take user input char by char
-
     /****************************************************************************
     MyShell> accepts user input 
     Gets the input typed by the user in the MyShell> prompt in the form of a line
     ****************************************************************************/
-    while (read(STDIN_FILENO, &ch, 1) == 1) {
+    while (read(STDIN_FILENO, &ch, 1) == 1) { // read standard input
         /*********************************************************************
         Extra credit: If your program accepts user input with unlimited length
         *********************************************************************/
@@ -192,8 +202,6 @@ char** parse(void)
         }
         // '\033' represents the ASCII escape character (27 in decimal, 0x1B in hex)
         else if (ch == '\033') { // terminal sends 3 bytes in sequence
-            printf("^C");
-            fflush(NULL);
             char seq[3]; // Ideally: seq[0] = '[', seq[1] = Letter code
             // capture next chars, if error then break
             if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
@@ -246,9 +254,10 @@ char** parse(void)
             cursor--;
 
             // Update display
-            fprintf(stdout, "\b");                      // Move back
-            fprintf(stdout, "%s", &string[cursor]);     // Reprint rest of string after cursor
-            fprintf(stdout, " ");                       // Clear character
+            fprintf(stdout, "\b"); // Move back
+            // Prints the remaining string after cursor
+            fprintf(stdout, "%.*s", (int)(string_length - cursor), &string[cursor]);
+            fprintf(stdout, " "); // Clear character
             
             // Reset cursor position by moving cursor back
             fprintf(stdout, "\033[%zuD", string_length - cursor + 1);
@@ -294,6 +303,7 @@ char** parse(void)
         }
         fflush(stdout); // flushes character out, essentially prints what's queued up.
     }
+
     disable_raw_mode(); // return to normal terminal setting state
 
     /********************************************************************
@@ -303,7 +313,7 @@ char** parse(void)
     - The user input is parsed and tokenized to suit the execvp arguments
     ********************************************************************/
 
-    // remove preceding whitespace and reallocate wasted memory
+    // remove preceding whitespace and reallocate unused memory
     string = realloc_leftover_string(string, &string_length);
 
     int extra_whitespace = 0; // keep track of extra whitespace
@@ -318,23 +328,23 @@ char** parse(void)
         }
 
         if (i != 0 && (string[i] == '"' || string[i] == '\'')) { // Check for quotes to include whitespaces
-            char quote = string[i];
+            char quote = string[i];                             // Note which delimiter we track
             i++;
-            word_start = &string[i];                            // ignore beginning quote
-            while (i < string_length && string[i] != quote) i++;// keep adding until closing quote
+            word_start = &string[i];                            // Ignore beginning quote
+            while (i < string_length && string[i] != quote) i++;// Keep adding until closing quote
             string[i] = NULLCHAR;                               // Null terminate word excluding end quote
             args[array_length] = word_start;                    // Add to args
             array_length++;
             word_start = &string[i + 1];                        // Start of next word
 
-        } else if (string[i] == ' ' && string[i + 1] != ' ') {  // end of word
+        } else if (string[i] == ' ' && string[i + 1] != ' ') {  // End of word
             string[i - extra_whitespace] = NULLCHAR;            // Null terminate word accounting for multiple whitespace
             args[array_length] = word_start;                    // Add token to args
             array_length++;
             word_start = &string[i + 1];                        // Start of next word
-            extra_whitespace = 0;                               // reset whitespace count
+            extra_whitespace = 0;                               // Reset whitespace count
 
-        } else if (string[i] == ' ' && string[i + 1] == ' ') {  // extra whitespace check
+        } else if (string[i] == ' ' && string[i + 1] == ' ') {  // Extra whitespace check
             extra_whitespace++;
         }
     }
@@ -362,10 +372,9 @@ char** parse(void)
 void free_args(char **args)
 {
     // Free the first string (original Command Line buffer)
-    if (args[0] != NULL) {
-        free(args[0]);
-    }
-    free(args);
+    if (args[0] != NULL) free(args[0]);
+    // Free the cmd array
+    if (args != NULL) free(args);
 }
 
 
@@ -382,16 +391,16 @@ void* realloc_buffer(void *ptr, size_t *current_buffer) {
     if (new_ptr == NULL) {
         fprintf(stderr, "Memory allocation failed for size %zu\n", *current_buffer);
         free(ptr); // Free original buffer if realloc fails
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     return new_ptr;
 }
 
 /**
- * Reallocates the token with with error checking.
+ * Reallocates the string with with error checking.
  * 
  * @param string The string buffer to resize
- * @param string_length The length of the current token
+ * @param string_length The length of the current string
  * @note Exits with status 1 if memory reallocation fails
  */
 void* realloc_leftover_string(char *string, size_t *string_length) {
@@ -410,7 +419,7 @@ void* realloc_leftover_string(char *string, size_t *string_length) {
     if (resized_string == NULL) {
         fprintf(stderr, "Memory allocation failed for size %zu\n", *string_length + 1);
         free(string); // Free original buffer if realloc fails
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     return resized_string;
 }
@@ -426,7 +435,7 @@ void* safe_malloc(size_t size) {
     void *ptr = malloc(size);
     if (ptr == NULL) {
         fprintf(stderr, "Memory allocation failed for size %zu\n", size);
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     return ptr;
 }
@@ -473,4 +482,15 @@ void enable_raw_mode() {
         perror("tcsetattr: Failed to apply new terminal settings");
         exit(EXIT_FAILURE);
     }
+}
+
+/**
+ * Signal handler for SIGINT (Ctrl+C).
+ * Prints ^C to stdout and terminates the program with exit code 1.
+ *
+ * @param sig The signal number (SIGINT)
+ */
+void handle_sigint(int sig) {
+    printf("^C\n");
+    exit(EXIT_FAILURE);
 }
