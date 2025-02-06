@@ -9,21 +9,13 @@
 - [] Implement command chaining '&&', '|', '||', ';'
     - [] break up args array into multiple args and executions (***cmds?)
 - [x] Implement left/right keys or move around command line
+- [] Account for wrapping around edges of terminal
 
 ## SMALL BOY
 - [] Implement command history
 - [x] Implement dynamic buffer for infinite input
-- [] comment stuff
-- [] account for quotes/other delimiters
-
-
-# NOTES
-
-# Juhua gave the greenlight
-# accounting for backspaces???
-# Keep breaking up functionality.
-# execve vs. execvp
-# learn more about character-to-character scanning
+- [x] comment stuff
+- [x] account for quotes/other delimiters
 
 ## working ideas for cd:
 ```c
@@ -39,4 +31,10 @@
             }
         }
     }
+```
+
+## working ideas for terminal window traversal:
+```c
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
 ```
