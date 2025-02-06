@@ -69,10 +69,13 @@ int main(int argc, char **argv)
         fflush(stdout); // Forces immediate display of prompt
         /**************************
         MyShell> accepts user input
-        ***************************/
+        **************************/
         args = parse();
         status = execute(args);
         free_args(args); // free **args for next use
+        /***********************************************
+        MyShell> is not displayed after the exit command
+        ***********************************************/
         if (status == 0) { // exit
             fprintf(stdout, "exiting...\n");
             break;
@@ -89,6 +92,7 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
+    int rv = 1; // return value, 1 by default, set to 0 for termination.
     // FOR DEBUGGING
     // int i = 0;
     // while (args[i] != NULL) {
@@ -100,9 +104,9 @@ int execute(char **args)
     When the user types exit the program terminates
     **********************************************/
     if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
-        return 0;
+        rv = 0; // trigger termination
     }
-    if (strcmp(args[0], "cd") == 0) { // command 'cd' to change directory of current process
+    else if (strcmp(args[0], "cd") == 0) { // command 'cd' to change directory of current process
         int status;
         if (args[1] == NULL) { // try to default to home when given no argument for cd
             status = chdir(getenv("HOME")); // chdir sys call to change path
@@ -118,29 +122,29 @@ int execute(char **args)
         } else {
             perror("Failure to Change Directory");
         }
-        return 1;
-    }
-    // for non-shell implemented system calls
-    int rc = fork();
-    if (rc == -1) {
-        perror("Fork failed");
-        return 0;
-    } else if (rc == 0) {
-        /***************************************************************************
-        - The command user types are executed, and the results are displayed
-        - The execvp command is appropriately implemented with the correct arguments
-        ***************************************************************************/
-        int status = execvp(args[0], args);
-        if (status = -1) {
-            perror("Failure to Execute Command");
-            exit(1);
-        }
     } else {
-        /******************************************************
-        After fork, the parent waits for the child to terminate
-        ******************************************************/
-        wait(NULL);
-        return 1;
+        // for non-shell implemented system calls
+        int rc = fork();
+        if (rc == -1) {
+            perror("Fork failed");
+            rv = 0; // trigger termination
+        } else if (rc == 0) {
+            /***************************************************************************
+            - The command user types are executed, and the results are displayed
+            - The execvp command is appropriately implemented with the correct arguments
+            ***************************************************************************/
+            int status = execvp(args[0], args);
+            if (status = -1) {
+                perror("Failure to Execute Command");
+                exit(1);
+            }
+        } else {
+            /******************************************************
+            After fork, the parent waits for the child to terminate
+            ******************************************************/
+            wait(NULL);
+            return rv;
+        }
     }
 }
 
@@ -162,6 +166,7 @@ char** parse(void)
     enable_raw_mode(); // turn off canonical mode, take user input char by char
 
     /****************************************************************************
+    MyShell> accepts user input 
     Gets the input typed by the user in the MyShell> prompt in the form of a line
     ****************************************************************************/
     while (read(STDIN_FILENO, &ch, 1) == 1) {
@@ -187,6 +192,8 @@ char** parse(void)
         }
         // '\033' represents the ASCII escape character (27 in decimal, 0x1B in hex)
         else if (ch == '\033') { // terminal sends 3 bytes in sequence
+            printf("^C");
+            fflush(NULL);
             char seq[3]; // Ideally: seq[0] = '[', seq[1] = Letter code
             // capture next chars, if error then break
             if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
