@@ -9,7 +9,7 @@
  * @brief Core header files for shell implementation
  * 
  */
-#include <stdio.h> // fprintf, fflush, read, STDIN_FILENO
+#include <stdio.h> // fprintf, fflush, read, STDIN_FILENO, perror
 #include <stdlib.h> // malloc, realloc, free, execvp, exit, EXIT_SUCCESS, atexit
 #include <unistd.h> // fork
 #include <string.h> // strcmp, strerror
@@ -18,19 +18,18 @@
 #include <errno.h> // access the errno variable
 #include <termios.h> // to read character by character, tcgetattr, tcsetattr, TCSAFLUSH
 
-
 /**
 DONOT change the existing function definitions. You can add functions, if necessary.
 */
 
 /*
     Note:
-    ChatGPT and man pages were only used to research/understand the functions of the included libraries
+    AI and man pages were only used to research/understand the functions of the included libraries
     AND to provide most of the documentation.
 */
 
-#define MAX_STR_BUFFER 16
-#define CMD_LINE_BUFFER 16
+#define STR_BUFFER 16 // starting buffer for input string
+#define CMD_LINE_BUFFER 16 // starting buffer for args array
 #define NEWLINE '\n'
 #define NULLCHAR '\0'
 #define SHELL_NAME "\033[1;34mMyShell> \033[0m" //  Style: Bold; Color mode: Blue;
@@ -44,6 +43,7 @@ void free_args(char **args);
 void disable_raw_mode();
 void enable_raw_mode();
 
+// Original terminal settings
 static struct termios original_tio;
 
 /**
@@ -56,15 +56,24 @@ static struct termios original_tio;
 int main(int argc, char **argv)
 {   
     char **args; // pointer to pointers of null terminating strings
-    int status;
+    int status; // status to check return of execute
     while (1) {
-        // Default stdout buffer size is typically 4096 bytes
-        printf(SHELL_NAME); // Writes to buffer
-        fflush(stdout);     // Forces immediate display of prompt
+        /*****************************************************
+        - MyShell> is displayed correctly
+        - MyShell> is displayed after executing a command 
+        - MyShell> is displayed after execvp fails 
+        - There is code to display MyShell> prompt infinitely, 
+          except when exit command or CTRL+C is given
+        *****************************************************/
+        printf(SHELL_NAME);
+        fflush(stdout); // Forces immediate display of prompt
+        /**************************
+        MyShell> accepts user input
+        ***************************/
         args = parse();
         status = execute(args);
-        free_args(args);
-        if (status == 0) {
+        free_args(args); // free **args for next use
+        if (status == 0) { // exit
             fprintf(stdout, "exiting...\n");
             break;
         }
@@ -86,10 +95,14 @@ int execute(char **args)
     //     printf("arg[%d]:  %s\n", i, args[i]);
     //     i++;
     // }
+
+    /**********************************************
+    When the user types exit the program terminates
+    **********************************************/
     if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         return 0;
     }
-    if (strcmp(args[0], "cd") == 0) { // command cd to change directory of current process
+    if (strcmp(args[0], "cd") == 0) { // command 'cd' to change directory of current process
         int status;
         if (args[1] == NULL) { // try to default to home when given no argument for cd
             status = chdir(getenv("HOME")); // chdir sys call to change path
@@ -103,22 +116,29 @@ int execute(char **args)
             // fprintf(stdout, "Current Working Directory: %s\n", cwd);
             // free(cwd);
         } else {
-            fprintf(stderr, "Failure to Change Directory: %s\n", strerror(errno));
+            perror("Failure to Change Directory");
         }
         return 1;
     }
     // for non-shell implemented system calls
     int rc = fork();
     if (rc == -1) {
-        fprintf(stderr, "Fork failed: %s\n", strerror(errno));
+        perror("Fork failed");
         return 0;
     } else if (rc == 0) {
+        /***************************************************************************
+        - The command user types are executed, and the results are displayed
+        - The execvp command is appropriately implemented with the correct arguments
+        ***************************************************************************/
         int status = execvp(args[0], args);
         if (status = -1) {
-            fprintf(stderr, "Failure to execute command: %s\n", strerror(errno));
+            perror("Failure to Execute Command");
             exit(1);
         }
     } else {
+        /******************************************************
+        After fork, the parent waits for the child to terminate
+        ******************************************************/
         wait(NULL);
         return 1;
     }
@@ -130,35 +150,46 @@ int execute(char **args)
  */
 char** parse(void)
 {
+    
     char ch;
     size_t command_line_buffer_length = CMD_LINE_BUFFER;
-    size_t string_buffer_length = MAX_STR_BUFFER;
+    size_t string_buffer_length = STR_BUFFER;
+    // allocate single string and array of tokens to heap.
     char **args = safe_malloc(sizeof(char *) * command_line_buffer_length);
     char *string = safe_malloc(sizeof(char) * string_buffer_length);
     size_t string_length = 0, array_length = 0;
-    size_t cursor = 0;
-    enable_raw_mode();
+    size_t cursor = 0; // cursor; where user is currently typing/editing
+    enable_raw_mode(); // turn off canonical mode, take user input char by char
+
+    /****************************************************************************
+    Gets the input typed by the user in the MyShell> prompt in the form of a line
+    ****************************************************************************/
     while (read(STDIN_FILENO, &ch, 1) == 1) {
-        // buffer checks
+        /*********************************************************************
+        Extra credit: If your program accepts user input with unlimited length
+        *********************************************************************/
+        // buffer check, check if string length is close to buffer size
         if (string_length + 1 >= string_buffer_length) {
             string = realloc_buffer(string, &string_buffer_length);
         }
-        if (ch == NEWLINE && !string[0]) {
+        /*****************************************************************************
+        When the user types an empty command, no error message is printed and the next 
+        MyShell> prompt is displayed
+        *****************************************************************************/
+        if (ch == NEWLINE && !string[0]) { // reprint shell for empty input
             fprintf(stdout, "\n%s", SHELL_NAME);
-        }  else if (ch == 0x03) {  // Ctrl+C
-            fprintf(stdout, "^C\n");
-            exit(1);
         } else if (ch == NEWLINE) { // finalize command line
+            string[string_length] = NULLCHAR; // null terminate string
             fprintf(stdout, "\n");  // Move to next line
-            string[string_length] = NULLCHAR;
             break;
-        } else if (ch == '\t') { // Do nothing; future autocomplete feature
+        } else if (ch == '\t') { // Do nothing for tab; future autocomplete feature
             continue;
         }
         // '\033' represents the ASCII escape character (27 in decimal, 0x1B in hex)
         else if (ch == '\033') { // terminal sends 3 bytes in sequence
             char seq[3]; // Ideally: seq[0] = '[', seq[1] = Letter code
-            if (read(STDIN_FILENO, &seq[0], 1) != 1) break; // capture next chars
+            // capture next chars, if error then break
+            if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
             if (read(STDIN_FILENO, &seq[1], 1) != 1) break;
 
             // ANSI escape sequences, '[' is the Control Sequence Introducer (CSI)
@@ -188,7 +219,7 @@ char** parse(void)
             }
         } else if ((ch == 127 || ch == '\b')) { // handle back spacing
             if (cursor <= 0) { // boundary check
-                continue;
+                continue; // do nothing
             }
             // shift characters left
             // Step by step visualization of backspacing with memmove:
@@ -201,23 +232,21 @@ char** parse(void)
             // 4. Result:  "Hello orld"
             //              0123456789       string_length = 10, cursor = 6, bytes to copy = 5
             //                    ^
-            memmove(&string[cursor-1], &string[cursor], string_length - cursor + 1); // + 1 to avoid bugs
+            memmove(&string[cursor-1], &string[cursor], string_length - cursor + 1); // + 1 to include \0
+
+            // decrement string length and cursor position
             string_length--;
             cursor--;
 
             // Update display
-            fprintf(stdout, "\b");  // Move back
-
-            // Reprint rest of string
-            for (size_t i = cursor; i < string_length; i++) {
-                fprintf(stdout, "%c", string[i]);
-            }
-            fprintf(stdout, " ");  // Clear character
+            fprintf(stdout, "\b");                      // Move back
+            fprintf(stdout, "%s", &string[cursor]);     // Reprint rest of string after cursor
+            fprintf(stdout, " ");                       // Clear character
             
             // Reset cursor position by moving cursor back
             fprintf(stdout, "\033[%zuD", string_length - cursor + 1);
         } else {
-            if (cursor < string_length) { // substring insertions
+            if (cursor < string_length) { // handle substring insertions
                 // Shift characters right
                 // Step by step visualization of inserting with memmove:
                 // Initial:    "Hello World"   (inserting an 'x')
@@ -230,55 +259,75 @@ char** parse(void)
                 //              012345678901    string_length = 12, cursor = 7, bytes to copy = 6
                 //                     ^
 
-                memmove(&string[cursor + 1], &string[cursor], string_length - cursor + 1); // + 1 to avoid bugs
+                memmove(&string[cursor + 1], &string[cursor], string_length - cursor + 1); // + 1 to include \0
                 
                 // Insert new character
                 string[cursor] = ch;
+                // Increment string length and cursor position
                 string_length++;
                 cursor++;
                 
                 // Update display
-                fprintf(stdout, "%c", ch);           // Print new char
-                fprintf(stdout, "\033[K");           // Clear line after cursor
-                fprintf(stdout, "%s", &string[cursor]); // Print rest of string
-                fprintf(stdout, "\033[%zuD", string_length - cursor); // Reset cursor
+                fprintf(stdout, "%c", ch);              // Print new char
+                fprintf(stdout, "\033[K");              // Clear line after cursor
+                fprintf(stdout, "%s", &string[cursor]); // Print rest of string after cursor
+
+                // Reset cursor position by moving cursor back
+                fprintf(stdout, "\033[%zuD", string_length - cursor);
 
             } else { // end of line insertions
                 fprintf(stdout, "%c", ch); // Print new char
+
                 // Insert new character
                 string[cursor] = ch;
+                // Increment string length and cursor position
                 cursor++;
                 string_length++;
             }
         }
         fflush(stdout); // flushes character out, essentially prints what's queued up.
     }
-    disable_raw_mode();
+    disable_raw_mode(); // return to normal terminal setting state
+
+    /********************************************************************
+    - Splits the line into tokens
+    - The tokens are used to create a char** pointer which will serve 
+    as an argument for execvp in execute() function
+    - The user input is parsed and tokenized to suit the execvp arguments
+    ********************************************************************/
+
+    // remove preceding whitespace and reallocate wasted memory
     string = realloc_leftover_string(string, &string_length);
 
     int extra_whitespace = 0; // keep track of extra whitespace
     char *word_start = string;  // Track start of current word
-    for (int i = 0; i < string_length; i++) {
+    for (int i = 0; i < string_length; i++) { // go through the entire buffer
+        /**********************************************************************************
+        Extra credit: If your program accepts user input with unlimited number of arguments
+        **********************************************************************************/
+        // buffer check, check if array length is close to buffer size
         if (array_length + 1 >= command_line_buffer_length) {
             args = realloc_buffer(args, &command_line_buffer_length);
         }
 
-        if (i != 0 && (string[i] == '"' || string[i] == '\'')) {
+        if (i != 0 && (string[i] == '"' || string[i] == '\'')) { // Check for quotes to include whitespaces
             char quote = string[i];
             i++;
-            word_start = &string[i];
-            while (i < string_length && string[i] != quote) i++;
-            string[i] = NULLCHAR;  // Null terminate word excluding '"'
-            args[array_length] = word_start;  // Add to args
+            word_start = &string[i];                            // ignore beginning quote
+            while (i < string_length && string[i] != quote) i++;// keep adding until closing quote
+            string[i] = NULLCHAR;                               // Null terminate word excluding end quote
+            args[array_length] = word_start;                    // Add to args
             array_length++;
-            word_start = &string[i + 1];  // Start of next word
-        } else if (string[i] == ' ' && string[i + 1] != ' ') { // end of word
-            string[i - extra_whitespace] = NULLCHAR;  // Null terminate word accounting for multiple whitespace
-            args[array_length] = word_start;  // Add to args
+            word_start = &string[i + 1];                        // Start of next word
+
+        } else if (string[i] == ' ' && string[i + 1] != ' ') {  // end of word
+            string[i - extra_whitespace] = NULLCHAR;            // Null terminate word accounting for multiple whitespace
+            args[array_length] = word_start;                    // Add token to args
             array_length++;
-            word_start = &string[i + 1];  // Start of next word
-            extra_whitespace = 0;
-        } else if (string[i] == ' ' && string[i + 1] == ' ') { // extra whitespace
+            word_start = &string[i + 1];                        // Start of next word
+            extra_whitespace = 0;                               // reset whitespace count
+
+        } else if (string[i] == ' ' && string[i + 1] == ' ') {  // extra whitespace check
             extra_whitespace++;
         }
     }
@@ -340,13 +389,16 @@ void* realloc_buffer(void *ptr, size_t *current_buffer) {
  */
 void* realloc_leftover_string(char *string, size_t *string_length) {
     size_t i = 0;
-    while (string[i] == ' ') {
+    while (string[i] == ' ') { // count preceding whitespaces
         i++;
     }
+    // shift left by the amount of whitespaces, removing them.
     if (i != 0) {
         memmove(string, string + i, *string_length - i + 1); // + 1 to account for null char
         *string_length -= i;
     }
+
+    // realloc and reduce size to length of string
     char *resized_string = realloc(string, sizeof(string) * (*string_length + 1)); // manage unused memory
     if (resized_string == NULL) {
         fprintf(stderr, "Memory allocation failed for size %zu\n", *string_length + 1);
@@ -377,10 +429,11 @@ void* safe_malloc(size_t size) {
  * This function is called when exiting the program to restore normal terminal behavior
  */
 void disable_raw_mode() {
-    // Attempt to restore original terminal settings. TCSAFLUSH will wait for all output to be transmitted
+    // Attempt to restore original terminal settings
+    // TCSAFLUSH will wait for all output to be transmitted
     // and discards any unread input before applying the changes
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_tio) == -1) {
-        perror("tcsetattr"); // Print error message if restoration fails
+        perror("tcsetattr: Failed to restore terminal settings");
     }
 }
 
@@ -392,7 +445,7 @@ void disable_raw_mode() {
 void enable_raw_mode() {
     // Save the original terminal settings so we can restore them later
     if (tcgetattr(STDIN_FILENO, &original_tio) == -1) {
-        perror("tcgetattr");
+        perror("tcgetattr: Failed to save terminal settings");
         exit(EXIT_FAILURE);
     }
     
@@ -410,7 +463,7 @@ void enable_raw_mode() {
 
     // Apply the new settings
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-        perror("tcsetattr");
+        perror("tcsetattr: Failed to apply new terminal settings");
         exit(EXIT_FAILURE);
     }
 }
