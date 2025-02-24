@@ -1,11 +1,10 @@
 /*******************************************************************************
-  @file         MyShell.c
-  @author       Juhua Hu, Jeremiah Brenio
-
+  @file         JBash.c
+  @author       Jeremiah Brenio
 *******************************************************************************/
 
 /**
- * @file MyShell.c
+ * @file JBash.c
  * @brief Core header files for shell implementation
  * 
  */
@@ -19,21 +18,11 @@
 #include <termios.h> // to read character by character, tcgetattr, tcsetattr, TCSAFLUSH
 #include <signal.h> // to handle Ctrl+C
 
-/**
-DONOT change the existing function definitions. You can add functions, if necessary.
-*/
-
-/*
-    Note:
-    AI and man pages were only used to research/understand the functions of the included libraries
-    AND to provide most of the documentation.
-*/
-
 #define STR_BUFFER 16 // starting buffer for input string
 #define CMD_LINE_BUFFER 16 // starting buffer for args array
 #define NEWLINE '\n'
 #define NULLCHAR '\0'
-#define SHELL_NAME "\033[1;34mMyShell> \033[0m" //  Style: Bold; Color mode: Blue;
+#define SHELL_NAME "\033[1;34mJBash> \033[0m" //  Style: Bold; Color mode: Blue;
 
 int execute(char **args);
 char** parse(void);
@@ -60,24 +49,11 @@ int main(int argc, char **argv)
     char **args; // pointer to pointers of null terminating strings
     int status; // status to check return of execute
     while (1) {
-        /*****************************************************
-        - MyShell> is displayed correctly
-        - MyShell> is displayed after executing a command 
-        - MyShell> is displayed after execvp fails 
-        - There is code to display MyShell> prompt infinitely, 
-          except when exit command or CTRL+C is given
-        *****************************************************/
         printf(SHELL_NAME);
         fflush(stdout); // Forces immediate display of prompt
-        /**************************
-        MyShell> accepts user input
-        **************************/
         args = parse();
         status = execute(args);
         free_args(args); // free **args for next use
-        /***********************************************
-        MyShell> is not displayed after the exit command
-        ***********************************************/
         if (status == 0) { // exit
             fprintf(stdout, "exiting...\n");
             break;
@@ -90,7 +66,7 @@ int main(int argc, char **argv)
 /**
   @brief Fork a child to execute the command using execvp. The parent should wait for the child to terminate
   @param args Null terminated list of arguments (including program).
-  @return returns 1, to continue execution and 0 to terminate the MyShell prompt.
+  @return returns 1, to continue execution and 0 to terminate the JBash prompt.
  */
 int execute(char **args)
 {
@@ -103,9 +79,6 @@ int execute(char **args)
     // }
 
     if (args[0] == NULL) {} // invalid input i.e. all whitespace, do nothing
-    /**********************************************
-    When the user types exit the program terminates
-    **********************************************/
     else if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
         rv = 0; // trigger termination
     }
@@ -132,10 +105,6 @@ int execute(char **args)
             perror("Fork failed");
             rv = 0; // trigger termination
         } else if (rc == 0) {
-            /***************************************************************************
-            - The command user types are executed, and the results are displayed
-            - The execvp command is appropriately implemented with the correct arguments
-            ***************************************************************************/
             int status = execvp(args[0], args);
             if (status == -1) {
                 perror("Failure to Execute Command");
@@ -144,9 +113,6 @@ int execute(char **args)
                 exit(EXIT_FAILURE);
             }
         } else {
-            /******************************************************
-            After fork, the parent waits for the child to terminate
-            ******************************************************/
             wait(NULL);
         }
     }
@@ -175,22 +141,12 @@ char** parse(void)
     size_t string_length = 0, array_length = 0;
     size_t cursor = 0; // cursor; where user is currently typing/editing
     enable_raw_mode(); // turn off canonical mode, take user input char by char
-    /****************************************************************************
-    MyShell> accepts user input 
-    Gets the input typed by the user in the MyShell> prompt in the form of a line
-    ****************************************************************************/
     while (read(STDIN_FILENO, &ch, 1) == 1) { // read standard input
-        /*********************************************************************
-        Extra credit: If your program accepts user input with unlimited length
-        *********************************************************************/
         // buffer check, check if string length is close to buffer size
         if (string_length + 1 >= string_buffer_length) {
             string = realloc_buffer(string, &string_buffer_length);
         }
-        /*****************************************************************************
-        When the user types an empty command, no error message is printed and the next 
-        MyShell> prompt is displayed
-        *****************************************************************************/
+
         if (ch == NEWLINE && !string[0]) { // reprint shell for empty input
             fprintf(stdout, "\n%s", SHELL_NAME);
         } else if (ch == NEWLINE) { // finalize command line
@@ -306,22 +262,12 @@ char** parse(void)
 
     disable_raw_mode(); // return to normal terminal setting state
 
-    /********************************************************************
-    - Splits the line into tokens
-    - The tokens are used to create a char** pointer which will serve 
-    as an argument for execvp in execute() function
-    - The user input is parsed and tokenized to suit the execvp arguments
-    ********************************************************************/
-
     // remove preceding whitespace and reallocate unused memory
     string = realloc_leftover_string(string, &string_length);
 
     int extra_whitespace = 0; // keep track of extra whitespace
     char *word_start = string;  // Track start of current word
     for (int i = 0; i < string_length; i++) { // go through the entire buffer
-        /**********************************************************************************
-        Extra credit: If your program accepts user input with unlimited number of arguments
-        **********************************************************************************/
         // buffer check, check if array length is close to buffer size
         if (array_length + 1 >= command_line_buffer_length) {
             args = realloc_buffer(args, &command_line_buffer_length);
