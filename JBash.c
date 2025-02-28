@@ -17,24 +17,7 @@
 #include <errno.h> // access the errno variable
 #include <termios.h> // to read character by character, tcgetattr, tcsetattr, TCSAFLUSH
 #include <signal.h> // to handle Ctrl+C
-
-#define STR_BUFFER 16 // starting buffer for input string
-#define CMD_LINE_BUFFER 16 // starting buffer for args array
-#define NEWLINE '\n'
-#define NULLCHAR '\0'
-#define SHELL_NAME "\033[1;34mJBash> \033[0m" //  Style: Bold; Color mode: Blue;
-
-int execute(char **args);
-char** parse(void);
-void* realloc_buffer(void *ptr, size_t *current_buffer);
-void* realloc_leftover_string(char *string, size_t *string_length);
-void *safe_malloc(size_t size);
-void free_args(char **args);
-void disable_raw_mode();
-void enable_raw_mode();
-void handle_sigint(int sig);
-
-static struct termios original_tio; // Original terminal settings
+#include "JBash.h"
 
 /**
    @brief Main function should run infinitely until terminated manually using CTRL+C or typing in the exit command
@@ -46,7 +29,6 @@ static struct termios original_tio; // Original terminal settings
 int main(int argc, char **argv)
 {   
     signal(SIGINT, handle_sigint); // Set up signal handler for Ctrl+C (SIGINT)
-    char **args; // pointer to pointers of null terminating strings
     int status; // status to check return of execute
     while (1) {
         printf(SHELL_NAME);
@@ -131,12 +113,12 @@ char** parse(void)
     size_t command_line_buffer_length = CMD_LINE_BUFFER;
     size_t string_buffer_length = STR_BUFFER;
     // allocate single string and array of tokens to heap.
-    char **args = safe_malloc(sizeof(char *) * command_line_buffer_length);
-    char *string = safe_malloc(sizeof(char) * string_buffer_length);
+    args = safe_malloc(sizeof(char *) * command_line_buffer_length);
+    inputString = safe_malloc(sizeof(char) * string_buffer_length);
     // Initialize the allocated memory with initial values with memset 
     // which is similar to calloc to make sure there are no garbage values
     memset(args, 0, sizeof(char *) * command_line_buffer_length);
-    memset(string, 0, sizeof(char) * string_buffer_length);
+    memset(inputString, 0, sizeof(char) * string_buffer_length);
     // Starting lengths
     size_t string_length = 0, array_length = 0;
     size_t cursor = 0; // cursor; where user is currently typing/editing
@@ -144,13 +126,13 @@ char** parse(void)
     while (read(STDIN_FILENO, &ch, 1) == 1) { // read standard input
         // buffer check, check if string length is close to buffer size
         if (string_length + 1 >= string_buffer_length) {
-            string = realloc_buffer(string, &string_buffer_length);
+            inputString = realloc_buffer(inputString, &string_buffer_length);
         }
 
-        if (ch == NEWLINE && !string[0]) { // reprint shell for empty input
+        if (ch == NEWLINE && !inputString[0]) { // reprint shell for empty input
             fprintf(stdout, "\n%s", SHELL_NAME);
         } else if (ch == NEWLINE) { // finalize command line
-            string[string_length] = NULLCHAR; // null terminate string
+            inputString[string_length] = NULLCHAR; // null terminate string
             fprintf(stdout, "\n");  // Move to next line
             break;
         } else if (ch == '\t') { // Do nothing for tab; future autocomplete feature
@@ -203,7 +185,7 @@ char** parse(void)
             // 4. Result:  "Hello orld"
             //              0123456789       string_length = 10, cursor = 6, bytes to copy = 5
             //                    ^
-            memmove(&string[cursor-1], &string[cursor], string_length - cursor + 1); // + 1 to include \0
+            memmove(&inputString[cursor-1], &inputString[cursor], string_length - cursor + 1); // + 1 to include \0
 
             // decrement string length and cursor position
             string_length--;
@@ -212,7 +194,7 @@ char** parse(void)
             // Update display
             fprintf(stdout, "\b"); // Move back
             // Prints the remaining string after cursor
-            fprintf(stdout, "%.*s", (int)(string_length - cursor), &string[cursor]);
+            fprintf(stdout, "%.*s", (int)(string_length - cursor), &inputString[cursor]);
             fprintf(stdout, " "); // Clear character
             
             // Reset cursor position by moving cursor back
@@ -231,10 +213,10 @@ char** parse(void)
                 //              012345678901    string_length = 12, cursor = 7, bytes to copy = 6
                 //                     ^
 
-                memmove(&string[cursor + 1], &string[cursor], string_length - cursor + 1); // + 1 to include \0
+                memmove(&inputString[cursor + 1], &inputString[cursor], string_length - cursor + 1); // + 1 to include \0
                 
                 // Insert new character
-                string[cursor] = ch;
+                inputString[cursor] = ch;
                 // Increment string length and cursor position
                 string_length++;
                 cursor++;
@@ -242,7 +224,7 @@ char** parse(void)
                 // Update display
                 fprintf(stdout, "%c", ch);              // Print new char
                 fprintf(stdout, "\033[K");              // Clear line after cursor
-                fprintf(stdout, "%s", &string[cursor]); // Print rest of string after cursor
+                fprintf(stdout, "%s", &inputString[cursor]); // Print rest of string after cursor
 
                 // Reset cursor position by moving cursor back
                 fprintf(stdout, "\033[%zuD", string_length - cursor);
@@ -251,7 +233,7 @@ char** parse(void)
                 fprintf(stdout, "%c", ch); // Print new char
 
                 // Insert new character
-                string[cursor] = ch;
+                inputString[cursor] = ch;
                 // Increment string length and cursor position
                 cursor++;
                 string_length++;
@@ -263,34 +245,34 @@ char** parse(void)
     disable_raw_mode(); // return to normal terminal setting state
 
     // remove preceding whitespace and reallocate unused memory
-    string = realloc_leftover_string(string, &string_length);
+    inputString = realloc_leftover_string(inputString, &string_length);
 
     int extra_whitespace = 0; // keep track of extra whitespace
-    char *word_start = string;  // Track start of current word
+    char *word_start = inputString;  // Track start of current word
     for (int i = 0; i < string_length; i++) { // go through the entire buffer
         // buffer check, check if array length is close to buffer size
         if (array_length + 1 >= command_line_buffer_length) {
             args = realloc_buffer(args, &command_line_buffer_length);
         }
 
-        if (i != 0 && (string[i] == '"' || string[i] == '\'')) { // Check for quotes to include whitespaces
-            char quote = string[i];                             // Note which delimiter we track
+        if (i != 0 && (inputString[i] == '"' || inputString[i] == '\'')) { // Check for quotes to include whitespaces
+            char quote = inputString[i];                             // Note which delimiter we track
             i++;
-            word_start = &string[i];                            // Ignore beginning quote
-            while (i < string_length && string[i] != quote) i++;// Keep adding until closing quote
-            string[i] = NULLCHAR;                               // Null terminate word excluding end quote
+            word_start = &inputString[i];                            // Ignore beginning quote
+            while (i < string_length && inputString[i] != quote) i++;// Keep adding until closing quote
+            inputString[i] = NULLCHAR;                               // Null terminate word excluding end quote
             args[array_length] = word_start;                    // Add to args
             array_length++;
-            word_start = &string[i + 1];                        // Start of next word
+            word_start = &inputString[i + 1];                        // Start of next word
 
-        } else if (string[i] == ' ' && string[i + 1] != ' ') {  // End of word
-            string[i - extra_whitespace] = NULLCHAR;            // Null terminate word accounting for multiple whitespace
+        } else if (inputString[i] == ' ' && inputString[i + 1] != ' ') {  // End of word
+            inputString[i - extra_whitespace] = NULLCHAR;            // Null terminate word accounting for multiple whitespace
             args[array_length] = word_start;                    // Add token to args
             array_length++;
-            word_start = &string[i + 1];                        // Start of next word
+            word_start = &inputString[i + 1];                        // Start of next word
             extra_whitespace = 0;                               // Reset whitespace count
 
-        } else if (string[i] == ' ' && string[i + 1] == ' ') {  // Extra whitespace check
+        } else if (inputString[i] == ' ' && inputString[i + 1] == ' ') {  // Extra whitespace check
             extra_whitespace++;
         }
     }
@@ -345,26 +327,26 @@ void* realloc_buffer(void *ptr, size_t *current_buffer) {
 /**
  * Reallocates the string with with error checking.
  * 
- * @param string The string buffer to resize
+ * @param inputString The inputString buffer to resize
  * @param string_length The length of the current string
  * @note Exits with status 1 if memory reallocation fails
  */
-void* realloc_leftover_string(char *string, size_t *string_length) {
+void* realloc_leftover_string(char *inputString, size_t *string_length) {
     size_t i = 0;
-    while (string[i] == ' ') { // count preceding whitespaces
+    while (inputString[i] == ' ') { // count preceding whitespaces
         i++;
     }
     // shift left by the amount of whitespaces, removing them.
     if (i != 0) {
-        memmove(string, string + i, *string_length - i + 1); // + 1 to account for null char
+        memmove(inputString, inputString + i, *string_length - i + 1); // + 1 to account for null char
         *string_length -= i;
     }
 
     // realloc and reduce size to length of string
-    char *resized_string = realloc(string, sizeof(string) * (*string_length + 1)); // manage unused memory
+    char *resized_string = realloc(inputString, sizeof(inputString) * (*string_length + 1)); // manage unused memory
     if (resized_string == NULL) {
         fprintf(stderr, "Memory allocation failed for size %zu\n", *string_length + 1);
-        free(string); // Free original buffer if realloc fails
+        free(inputString); // Free original buffer if realloc fails
         exit(EXIT_FAILURE);
     }
     return resized_string;
@@ -438,5 +420,7 @@ void enable_raw_mode() {
  */
 void handle_sigint(int sig) {
     printf("^C\n");
+    if (args != NULL) free_args(args);
+    if (inputString != NULL) free(inputString);
     exit(EXIT_FAILURE);
 }
