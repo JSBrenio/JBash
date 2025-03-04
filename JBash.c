@@ -8,15 +8,6 @@
  * @brief Core header files for shell implementation
  * 
  */
-#include <stdio.h> // fprintf, fflush, read, STDIN_FILENO, perror
-#include <stdlib.h> // malloc, realloc, free, execvp, exit, EXIT_SUCCESS, atexit
-#include <unistd.h> // fork, chdir, STDOUT_FILENO, getcwd
-#include <string.h> // strcmp, strerror, memset
-#include <stddef.h> // for NULL, size_t (unsigned integer)
-#include <sys/wait.h> // wait
-#include <errno.h> // access the errno variable
-#include <termios.h> // to read character by character, tcgetattr, tcsetattr, TCSAFLUSH
-#include <signal.h> // to handle Ctrl+C
 #include "JBash.h"
 
 /**
@@ -30,8 +21,10 @@ int main(int argc, char **argv)
 {   
     signal(SIGINT, handle_sigint); // Set up signal handler for Ctrl+C (SIGINT)
     int status; // status to check return of execute
+    // retrieve current owrking directory
+    cwd = getcwd(NULL, 0);
     while (1) {
-        printf(SHELL_NAME);
+        print_prompt();
         fflush(stdout); // Forces immediate display of prompt
         args = parse();
         status = execute(args);
@@ -52,13 +45,16 @@ int main(int argc, char **argv)
  */
 int execute(char **args)
 {
-    int rv = 1; // return value, 1 by default, set to 0 for termination.
     // FOR DEBUGGING
-    // int i = 0;
-    // while (args[i] != NULL) {
-    //     printf("arg[%d]:  %s\n", i, args[i]);
-    //     i++;
-    // }
+    #if DEBUG
+        int i = 0;
+        while (args[i] != NULL) {
+            printf("arg[%d]:  %s\n", i, args[i]);
+            i++;
+        }
+    #endif
+
+    int rv = 1; // return value, 1 by default, set to 0 for termination.
 
     if (args[0] == NULL) {} // invalid input i.e. all whitespace, do nothing
     else if (strcmp(args[0], "exit") == 0) { // command 'exit' check to terminate shell
@@ -74,9 +70,11 @@ int execute(char **args)
 
         if (status == 0) {
             // FOR DEBUGGING
-            // char *cwd = getcwd(NULL, 0);
-            // fprintf(stdout, "Current Working Directory: %s\n", cwd);
-            // free(cwd);
+            #if DEBUG
+                char *cwd = getcwd(NULL, 0);
+                fprintf(stdout, "Current Working Directory: %s\n", cwd);
+                free(cwd);
+            #endif
         } else {
             perror("Failure to Change Directory");
         }
@@ -129,11 +127,11 @@ char** parse(void)
             inputString = realloc_buffer(inputString, &string_buffer_length);
         }
 
-        if (ch == NEWLINE && !inputString[0]) { // reprint shell for empty input
-            fprintf(stdout, "\n%s", SHELL_NAME);
-        } else if (ch == NEWLINE) { // finalize command line
-            inputString[string_length] = NULLCHAR; // null terminate string
-            fprintf(stdout, "\n");  // Move to next line
+        if (ch == NEWLINE && !inputString[0]) {     // reprint shell for empty input
+            print_prompt();
+        } else if (ch == NEWLINE) {                 // finalize command line
+            inputString[string_length] = NULLCHAR;  // null terminate string
+            fprintf(stdout, "\n");                  // Move to next line
             break;
         } else if (ch == '\t') { // Do nothing for tab; future autocomplete feature
             continue;
@@ -222,8 +220,8 @@ char** parse(void)
                 cursor++;
                 
                 // Update display
-                fprintf(stdout, "%c", ch);              // Print new char
-                fprintf(stdout, "\033[K");              // Clear line after cursor
+                fprintf(stdout, "%c", ch);                   // Print new char
+                fprintf(stdout, "\033[K");                   // Clear line after cursor
                 fprintf(stdout, "%s", &inputString[cursor]); // Print rest of string after cursor
 
                 // Reset cursor position by moving cursor back
@@ -256,23 +254,23 @@ char** parse(void)
         }
 
         if (i != 0 && (inputString[i] == '"' || inputString[i] == '\'')) { // Check for quotes to include whitespaces
-            char quote = inputString[i];                             // Note which delimiter we track
+            char quote = inputString[i];                                   // Note which delimiter we track
             i++;
-            word_start = &inputString[i];                            // Ignore beginning quote
-            while (i < string_length && inputString[i] != quote) i++;// Keep adding until closing quote
-            inputString[i] = NULLCHAR;                               // Null terminate word excluding end quote
-            args[array_length] = word_start;                    // Add to args
+            word_start = &inputString[i];                                  // Ignore beginning quote
+            while (i < string_length && inputString[i] != quote) i++;      // Keep adding until closing quote
+            inputString[i] = NULLCHAR;                                     // Null terminate word excluding end quote
+            args[array_length] = word_start;                               // Add to args
             array_length++;
-            word_start = &inputString[i + 1];                        // Start of next word
+            word_start = &inputString[i + 1];                              // Start of next word
 
-        } else if (inputString[i] == ' ' && inputString[i + 1] != ' ') {  // End of word
-            inputString[i - extra_whitespace] = NULLCHAR;            // Null terminate word accounting for multiple whitespace
-            args[array_length] = word_start;                    // Add token to args
+        } else if (inputString[i] == ' ' && inputString[i + 1] != ' ') {   // End of word
+            inputString[i - extra_whitespace] = NULLCHAR;                  // Null terminate word accounting for multiple whitespace
+            args[array_length] = word_start;                               // Add token to args
             array_length++;
-            word_start = &inputString[i + 1];                        // Start of next word
-            extra_whitespace = 0;                               // Reset whitespace count
+            word_start = &inputString[i + 1];                              // Start of next word
+            extra_whitespace = 0;                                          // Reset whitespace count
 
-        } else if (inputString[i] == ' ' && inputString[i + 1] == ' ') {  // Extra whitespace check
+        } else if (inputString[i] == ' ' && inputString[i + 1] == ' ') {   // Extra whitespace check
             extra_whitespace++;
         }
     }
@@ -285,6 +283,10 @@ char** parse(void)
     args[array_length] = NULL;  // Null terminate args array
 
     return args;
+}
+
+void print_prompt() {
+    printf("\033[1;32m%s:\033[0m%s", cwd, SHELL_NAME);
 }
 
 /**
